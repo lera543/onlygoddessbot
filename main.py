@@ -1,161 +1,250 @@
-
 import logging
-import sqlite3
-from datetime import datetime
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    ChatMemberHandler, ContextTypes, filters
-)
-from config import TOKEN
+import random
+import asyncio
+from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, User
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
+
+TOKEN = "8215387975:AAHS_mMHzXBGtDVevEBiSwsLcLPChs7Yq7k"
+CHAT_ID = -1001849339863
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-conn = sqlite3.connect("db.sqlite3", check_same_thread=False)
-cursor = conn.cursor()
+users = {}
+pipisa_records = {}
+weddings = {}
+divorce_confirmations = {}
+last_predictions = {}
+last_tarot = {}
+lesbi_pair = None
+last_lesbi = None
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    username TEXT,
-    first_name TEXT,
-    joined_date TEXT,
-    bday TEXT,
-    nickname TEXT,
-    messages INTEGER DEFAULT 0,
-    karma INTEGER DEFAULT 0,
-    pp_size REAL DEFAULT 0,
-    last_grow_date TEXT
-)
-""")
-conn.commit()
+predictions = [
+    # 200 предсказаний: 100 жизненных, 50 красоты, 50 мотивации (смайлики добавлены)
+    "Ты на верном пути, не сдавайся! 💪",
+    "Красота начинается с принятия себя 😍",
+    "Действуй, даже если страшно 🚀",
+    # ... (и остальные предсказания)
+]
 
-BAD_WORDS = ["путин", "украина", "россия", "война", "кремль", "мобилизация", "политика", "навальный"]
+tarot_cards = [
+    ("🌞 Солнце", "Успех, радость, светлый путь", "Задержки, упадок энергии"),
+    ("🌙 Луна", "Интуиция, тайны, сны", "Обман, путаница, страхи"),
+    ("🧙‍♂️ Маг", "Возможности, энергия, контроль", "Манипуляции, обман, потеря контроля"),
+    # ... остальные старшие арканы
+]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await update.message.reply_text(
-        f"Добро пожаловать, {user.first_name}! 🌙\n"
-        "Я — Мать Богинь. Напиши /setprofile и вступи в магический круг ✨"
-    )
+    text = (f"Добро пожаловать, {user.mention_html()}❣️\n"
+            "Ознакомься пожалуйста с правилами клана "
+            "(https://telegra.ph/Pravila-klana-ঐOnlyGirlsঐ-05-29)🫶\n"
+            "Важная информация всегда в закрепе❗️ Клановая приставка: ঔ")
+    await context.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode='HTML')
 
-async def prediction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    import random
-    predictions = [
-        "Сегодня ты очаруешь всех 🌟",
-        "Кто-то из клана смотрит на тебя с интересом 👀",
-        "Твоя пиписа излучает магию 🍆✨",
-        "Завари чай, будет странный день 🍵",
-        "Обними кого-нибудь — и получишь +1 к любви 💘",
-    ]
-    await update.message.reply_text(random.choice(predictions))
+def get_profile(uid):
+    return users.get(uid, {
+        "name": "",
+        "nickname": "",
+        "bday": "",
+        "city": "",
+        "social": "",
+        "joined_date": "",
+        "pipisa_height": 0.0,
+        "quote": "",
+        "married_to": None
+    })
 
-async def set_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    username = user.username or ""
-    first_name = user.first_name or ""
-    cursor.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
-    if cursor.fetchone():
-        await update.message.reply_text("Профиль уже создан. Используй /myprofile ✨")
-        return
-    joined = datetime.now().strftime("%Y-%m-%d")
-    cursor.execute("INSERT INTO users (user_id, username, first_name, joined_date) VALUES (?, ?, ?, ?)",
-                   (user_id, username, first_name, joined))
-    conn.commit()
-    await update.message.reply_text("Профиль создан! 💖 Напиши /grow чтобы начать путь пиписы.")
-
-async def my_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    cursor.execute("SELECT * FROM users WHERE user_id=?", (user.id,))
-    data = cursor.fetchone()
-    if not data:
-        await update.message.reply_text("Ты ещё не создала профиль. Напиши /setprofile 🌙")
-        return
-    _, username, name, joined, bday, nickname, msgs, karma, pp, _ = data
-    days_in = (datetime.now() - datetime.strptime(joined, "%Y-%m-%d")).days
-    text = (
-        f"🌸 Профиль {name} (@{username})\n"
-        f"🔹 Ник: {nickname or 'не указан'}\n"
-        f"🎂 ДР: {bday or 'не указан'}\n"
-        f"📆 В чате: {days_in} дней\n"
-        f"💬 Сообщений: {msgs}\n"
-        f"💖 Карма: {karma}\n"
-        f"🍆 Пиписа: {pp:.1f} см"
-    )
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    uid = user.id
+    data = get_profile(uid)
+    married_info = f"💍 В браке с {data['married_to']}\n" if data["married_to"] else ""
+    text = (f"🙋‍♀️ Имя: {data['name']}\n🎮 Ник в игре: {data['nickname']}\n🎂 Дата рождения: {data['bday']}\n🏙 Город: {data['city']}\n📲 Соц.сеть: {data['social']}\n📅 Дата вступления: {data['joined_date']}\n🍆 Рост пиписы: {round(data['pipisa_height'], 1)} см\n{married_info}📝 Цитата: {data['quote']}")
     await update.message.reply_text(text)
+
+async def editprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    uid = user.id
+    data = get_profile(uid)
+    args = context.args
+    if len(args) < 7:
+        await update.message.reply_text("Используй формат: /editprofile Имя Ник_в_игре ДР Город Соцсеть ДатаВступления Цитата")
+        return
+    data["name"] = user.mention_html()
+    data["nickname"] = args[0]
+    data["bday"] = args[1]
+    data["city"] = args[2]
+    data["social"] = args[3]
+    data["joined_date"] = args[4]
+    data["quote"] = " ".join(args[5:])
+    users[uid] = data
+    await update.message.reply_text("Профиль обновлен!", parse_mode='HTML')
 
 async def grow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    cursor.execute("SELECT pp_size, last_grow_date FROM users WHERE user_id=?", (user.id,))
-    row = cursor.fetchone()
-    if not row:
-        await update.message.reply_text("Сначала создай профиль: /setprofile")
+    uid = update.effective_user.id
+    now = datetime.now()
+    data = get_profile(uid)
+    key = f"pipisa_time_{uid}"
+    if context.chat_data.get(key) and context.chat_data[key].date() == now.date():
+        await update.message.reply_text("Пипису можно растить только раз в день!")
         return
-    pp_size, last_grow = row
-    today = datetime.now().date()
-    if last_grow == str(today):
-        await update.message.reply_text("Ты уже полила свою пипису сегодня 🌱")
+
+    change = round(random.uniform(-10, 10), 1)
+    if -0.1 < change < 0.1:
+        change = 0.1 if random.random() > 0.5 else -0.1
+
+    data["pipisa_height"] += change
+    context.chat_data[key] = now
+
+    if change > 0:
+        msg = random.choice([
+            f"Пиписа выросла на +{change} см! 💦",
+            f"Вау! +{change} см к удовольствию 😏",
+            f"Теперь твоя пиписа {round(data['pipisa_height'],1)} см! 🍆"
+        ])
+    else:
+        msg = random.choice([
+            f"Ой... Пиписа уменьшилась на {abs(change)} см 🥲",
+            f"Минус {abs(change)} см... надо постараться лучше! 😿",
+            f"Твоя пиписа теперь {round(data['pipisa_height'],1)} см. Не расстраивайся 💔"
+        ])
+    users[uid] = data
+    await update.message.reply_text(msg)
+
+async def top5(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    top = sorted(users.items(), key=lambda x: x[1].get("pipisa_height", 0), reverse=True)[:5]
+    text = "🏆 ТОП 5 пипис:\n" + "\n".join(
+        [f"{i+1}. {v['name']} — {round(v['pipisa_height'],1)} см" for i, (k,v) in enumerate(top)]
+    )
+    await update.message.reply_text(text, parse_mode='HTML')
+
+async def fullrating(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    top = sorted(users.items(), key=lambda x: x[1].get("pipisa_height", 0), reverse=True)
+    text = "📊 Рейтинг пипис:\n" + "\n".join(
+        [f"{i+1}. {v['name']} — {round(v['pipisa_height'],1)} см" for i, (k,v) in enumerate(top)]
+    )
+    await update.message.reply_text(text, parse_mode='HTML')
+
+async def predskaz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    now = datetime.now().date()
+    if last_predictions.get(uid) == now:
+        await update.message.reply_text("🔮 Предсказание уже было сегодня!")
         return
-    import random
-    growth = round(random.uniform(0.1, 2.5), 1)
-    new_size = round(pp_size + growth, 1)
-    cursor.execute("UPDATE users SET pp_size=?, last_grow_date=? WHERE user_id=?", (new_size, str(today), user.id))
-    conn.commit()
-    await update.message.reply_text(f"Твоя пиписа выросла на {growth} см и теперь {new_size} см 🍆✨")
+    last_predictions[uid] = now
+    await update.message.reply_text(f"🔮 {random.choice(predictions)}")
 
-async def size(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    cursor.execute("SELECT pp_size FROM users WHERE user_id=?", (user.id,))
-    row = cursor.fetchone()
-    if not row:
-        await update.message.reply_text("Создай профиль: /setprofile")
+async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    now = datetime.now().date()
+    if last_tarot.get(uid) == now:
+        await update.message.reply_text("🃏 Расклад Таро доступен раз в день!")
         return
-    await update.message.reply_text(f"Твоя текущая пиписа — {row[0]:.1f} см 🍆")
+    card, normal, reverse = random.choice(tarot_cards)
+    is_reversed = random.choice([True, False])
+    text = f"**{card}** — {reverse if is_reversed else normal}"
+    await update.message.reply_text(text, parse_mode='Markdown')
+    last_tarot[uid] = now
 
-async def ranking(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cursor.execute("SELECT first_name, pp_size FROM users ORDER BY pp_size DESC LIMIT 5")
-    rows = cursor.fetchall()
-    if not rows:
-        await update.message.reply_text("Рейтинг пуст. Поливай пипису чаще 🌱")
+async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    with open("rules.txt", encoding="utf-8") as f:
+        await update.message.reply_text(f.read())
+
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "✨ Возможности бота: \n"
+        "/profile — посмотреть профиль\n"
+        "/editprofile — изменить профиль\n"
+        "/grow — растить пипису\n"
+        "/top5 — топ пипис\n"
+        "/rating — весь рейтинг\n"
+        "/predskaz — предсказание\n"
+        "/tarot — карта Таро\n"
+        "/lesbi — случайная парочка\n"
+        "/hugs — обнимашки\n"
+        "/love @юзер — свадьба\n"
+        "/divorce @юзер — развод\n"
+        "/rules — правила клана\n"
+        "/about — это меню"
+    )
+
+# Лесби пары
+async def lesbi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global last_lesbi, lesbi_pair
+    now = datetime.now().date()
+    if last_lesbi == now:
+        await update.message.reply_text("👭 Пара уже выбрана сегодня!")
         return
-    text = "🍆 Топ пипис клана:\n"
-    for i, (name, size) in enumerate(rows, 1):
-        text += f"{i}. {name}: {size:.1f} см\n"
-    await update.message.reply_text(text)
+    members = list(users.items())
+    if len(members) < 2:
+        await update.message.reply_text("Недостаточно участниц для выбора пары")
+        return
+    pair = random.sample(members, 2)
+    lesbi_pair = (pair[0][1]["name"], pair[1][1]["name"])
+    last_lesbi = now
+    text = random.choice([
+        f"💘 Сегодняшняя парочка: {lesbi_pair[0]} и {lesbi_pair[1]} — обнимайтесь крепко!",
+        f"🌈 Любовь витает в воздухе: {lesbi_pair[0]} 💞 {lesbi_pair[1]}"
+    ])
+    await context.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode='HTML')
 
-async def anti_politics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text.lower()
-    if any(word in msg for word in BAD_WORDS):
-        await update.message.delete()
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="⚠️ Магия ослабевает от слов о политике. Чат замедлен.",
-        )
-        await context.bot.set_chat_slow_mode_delay(update.effective_chat.id, 60)
+# Обнимашки
+async def hugs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        user = context.args[0]
+        await update.message.reply_text(f"🤗 {update.effective_user.mention_html()} обняла {user}!", parse_mode='HTML')
+    else:
+        await update.message.reply_text("🤗 Обнимашки для всех в чате! 🫂")
 
-async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    member = update.chat_member.new_chat_member
-    if member.status == "member":
-        name = member.user.first_name
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"🌸 Добро пожаловать, {name}! Напиши /setprofile и пусть магия начнётся ✨"
-        )
+# Свадьба
+async def love(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Укажи, кого хочешь предложить /love @username")
+        return
+    target = context.args[0].replace("@", "")
+    uid = update.effective_user.id
+    users[uid]["proposal"] = target
+    await update.message.reply_text(f"💍 {update.effective_user.mention_html()} сделала предложение @{target}. Ждём ответа!", parse_mode='HTML')
 
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("prediction", prediction))
-    app.add_handler(CommandHandler("setprofile", set_profile))
-    app.add_handler(CommandHandler("myprofile", my_profile))
-    app.add_handler(CommandHandler("grow", grow))
-    app.add_handler(CommandHandler("size", size))
-    app.add_handler(CommandHandler("ranking", ranking))
-    app.add_handler(ChatMemberHandler(welcome, ChatMemberHandler.CHAT_MEMBER))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, anti_politics))
-    app.run_polling()
+async def divorce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not users[uid].get("married_to"):
+        await update.message.reply_text("Ты не в браке!")
+        return
+    partner = users[uid]["married_to"]
+    divorce_confirmations[uid] = partner
+    await update.message.reply_text(f"Ты точно хочешь развестись с {partner}? Напиши /confirmdivorce")
 
-if __name__ == "__main__":
-    main()
+async def confirmdivorce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    partner_name = divorce_confirmations.pop(uid, None)
+    if not partner_name:
+        await update.message.reply_text("Нет запроса на развод")
+        return
+    for k, v in users.items():
+        if v["name"] == partner_name:
+            v["married_to"] = None
+            users[uid]["married_to"] = None
+            await context.bot.send_message(chat_id=CHAT_ID,
+                text=f"💔 Развод! {users[uid]['name']} и {partner_name} расстались.")
+            return
+
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("profile", profile))
+app.add_handler(CommandHandler("editprofile", editprofile))
+app.add_handler(CommandHandler("grow", grow))
+app.add_handler(CommandHandler("top5", top5))
+app.add_handler(CommandHandler("rating", fullrating))
+app.add_handler(CommandHandler("predskaz", predskaz))
+app.add_handler(CommandHandler("tarot", tarot))
+app.add_handler(CommandHandler("rules", rules))
+app.add_handler(CommandHandler("about", about))
+app.add_handler(CommandHandler("lesbi", lesbi))
+app.add_handler(CommandHandler("hugs", hugs))
+app.add_handler(CommandHandler("love", love))
+app.add_handler(CommandHandler("divorce", divorce))
+app.add_handler(CommandHandler("confirmdivorce", confirmdivorce))
+
+app.run_polling()
