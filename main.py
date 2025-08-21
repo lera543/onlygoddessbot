@@ -1,103 +1,226 @@
 import logging
 import random
-import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler, ConversationHandler
+from datetime import datetime
+from telegram import Update, User
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TOKEN = "8215387975:AAHS_mMHzXBGtDVevEBiSwsLcLPChs7Yq7k"
 CHAT_ID = -1001849339863
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 users = {}
-married = set()
-lesbi_couples = {}
-last_prediction_date = {}
-last_lesbi_date = None
+pipisa_records = {}
+last_predictions = {}
+last_tarot = {}
+lesbi_pair = None
+last_lesbi = None
+divorce_confirmations = {}
 
-with open("predictions.txt", "r", encoding="utf-8") as f:
-    PREDICTIONS = f.read().split("\n")
-
-TAROT_CARDS = [
-    ("Шут 🤡", "новое начало, спонтанность, наивность", "безрассудство, неопределённость"),
-    ("Маг 🧙", "воля, мастерство, творческая энергия", "манипуляции, обман, неуверенность"),
-    ("Жрица 🔮", "интуиция, тайна, внутренняя мудрость", "скрытность, отстранённость"),
-    ("Императрица 👑", "изобилие, забота, плодородие", "зависимость, расточительность"),
-    ("Император 🧱", "власть, стабильность, защита", "деспотизм, жесткость"),
-    ("Жрец 🙏", "духовность, традиции, знание", "догматизм, ограниченность"),
-    ("Влюблённые 💞", "любовь, выбор, единство", "раздор, нерешительность"),
-    ("Колесница 🛞", "победа, движение, контроль", "потеря контроля, агрессия"),
-    ("Сила 🦁", "смелость, терпение, уверенность", "сомнение, страх"),
-    ("Отшельник 🕯️", "поиск истины, уединение", "изоляция, замкнутость"),
-    ("Колесо Фортуны 🎡", "судьба, перемены, удача", "непредсказуемость, застой"),
-    ("Справедливость ⚖️", "равновесие, честность", "нечестность, предвзятость"),
-    ("Повешенный 🙃", "жертва, пауза, переосмысление", "застой, беспомощность"),
-    ("Смерть 💀", "конец, трансформация, обновление", "сопротивление переменам"),
-    ("Умеренность 🧘", "гармония, баланс, терпение", "дисбаланс, чрезмерность"),
-    ("Дьявол 😈", "искушение, зависимость, страсть", "освобождение, контроль"),
-    ("Башня 🗼", "внезапные перемены, крах", "избежание разрушения"),
-    ("Звезда 🌟", "надежда, вдохновение, исцеление", "пессимизм, потеря веры"),
-    ("Луна 🌙", "иллюзии, страхи, интуиция", "заблуждение, тревожность"),
-    ("Солнце ☀️", "радость, успех, просветление", "самодовольство, упрямство"),
-    ("Суд ⚰️", "пробуждение, искупление, судьба", "сожаление, страх перемен"),
-    ("Мир 🌍", "завершение, целостность, успех", "незавершённость, задержки")
+predictions = [
+    "Ты на верном пути, не сдавайся! 💪",
+    "Красота начинается с принятия себя 😍",
+    "Действуй, даже если страшно 🚀",
 ]
 
-PROFILE_QUESTIONS = [
-    "Как тебя зовут? (имя)",
-    "Какой у тебя ник в игре?", 
-    "Какой у тебя UID?", 
-    "Когда у тебя день рождения? (например, 01.01.2000)",
-    "Из какого ты города?",
-    "Оставь ссылку на свой TikTok или Instagram:",
-    "Когда ты вступила в чат? (например, 01.08.2025)",
-    "Поделись своим девизом или любимой цитатой:"
+tarot_cards = [
+    ("🌞 Солнце", "Успех, радость, светлый путь", "Задержки, упадок энергии"),
+    ("🌙 Луна", "Интуиция, тайны, сны", "Обман, путаница, страхи"),
+    ("🧙‍♂️ Маг", "Возможности, энергия, контроль", "Манипуляции, обман, потеря контроля"),
 ]
 
-HUGS_MESSAGES = [
-    "Обнимаю тебя крепко-крепко 🫂 Всё будет хорошо!",
-    "Тебя кто-то обнимает прямо сейчас 🤗 Надеюсь, тебе стало теплее!",
-    "Мягкие обнимашки на твой день! 🧸 Ты супер!",
-    "Вот так нежно и заботливо — обнимаю 💞",
-    "Кто не обнимется — тот не играет в кастомке!",
-    "🫂 Токсиков тоже иногда обнимают… по голове… табуреткой 🙃"
-]
+def get_profile(uid):
+    return users.get(uid, {
+        "name": "",
+        "nickname": "",
+        "uid": "",
+        "bday": "",
+        "city": "",
+        "social": "",
+        "joined_date": "",
+        "pipisa_height": 0.0,
+        "quote": "",
+        "married_to": None,
+    })
 
-PIPISA_UP_REACTIONS = [
-    "Пиписа выросла как на дрожжах! 🍆✨",
-    "Ого! Такая прибавка, аж в чате тепло стало 😳",
-    "Пиписа тянется к солнцу! ☀️",
-    "Сегодня удачный день для роста! 📈"
-]
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text = (f"Добро пожаловать, {user.mention_html()}❣️\n"
+            "Ознакомься пожалуйста с правилами клана https://telegra.ph/Pravila-klana-ঐOnlyGirlsঐ-05-29 🫶\n"
+            "Важная информация всегда в закрепе❗️ Клановая приставка: ঔ")
+    await context.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode='HTML')
 
-PIPISA_DOWN_REACTIONS = [
-    "Упс... что-то пошло не так 😬",
-    "Пиписа сжалась от холода 🥶",
-    "Грустный день, даже пиписа поникла 😢",
-    "Ничего, завтра вырастет снова! 💪"
-]
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    uid = user.id
+    data = get_profile(uid)
+    married_info = f"💍 В браке с {data['married_to']}\n" if data["married_to"] else ""
+    text = (
+        f"🙋‍♀️ Имя: {data['name']}\n"
+        f"🎮 Ник в игре: `{data['nickname']}`\n"
+        f"🔢 UID: `{data['uid']}`\n"
+        f"🎂 Дата рождения: {data['bday']}\n"
+        f"🏙 Город: {data['city']}\n"
+        f"📲 ТТ или inst: {data['social']}\n"
+        f"📅 Дата вступления: {data['joined_date']}\n"
+        f"🍆 Пиписа: {round(data['pipisa_height'], 1)} см\n"
+        f"{married_info}📝 Девиз: {data['quote']}"
+    )
+    await update.message.reply_text(text, parse_mode='Markdown')
 
-# Дальше идут все функции: start, profile, editprofile, grow, top5, rating и т.д.
-# ... (добавляются все функции согласно последней версии)
+async def editprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    uid = user.id
+    args = context.args
+    if len(args) < 8:
+        await update.message.reply_text("Формат: /editprofile имя ник uid др город соцсеть дата цитата")
+        return
+    users[uid] = {
+        "name": user.first_name,
+        "nickname": args[1],
+        "uid": args[2],
+        "bday": args[3],
+        "city": args[4],
+        "social": args[5],
+        "joined_date": args[6],
+        "quote": " ".join(args[7:]),
+        "pipisa_height": users.get(uid, {}).get("pipisa_height", 0.0),
+        "married_to": users.get(uid, {}).get("married_to")
+    }
+    await update.message.reply_text("Профиль обновлён!")
 
-# Регистрируем команды
+async def grow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    now = datetime.now()
+    data = get_profile(uid)
+    key = f"pipisa_time_{uid}"
+    if context.chat_data.get(key) and context.chat_data[key].date() == now.date():
+        await update.message.reply_text("Пипису можно растить только раз в день!")
+        return
+    change = round(random.uniform(-10, 10), 1)
+    if -0.1 < change < 0.1:
+        change = 0.1 if random.random() > 0.5 else -0.1
+    data["pipisa_height"] += change
+    context.chat_data[key] = now
+    msg = (f"Пиписа выросла на +{change} см! 💦" if change > 0 else
+           f"Ой... Пиписа уменьшилась на {abs(change)} см 🥲")
+    users[uid] = data
+    await update.message.reply_text(msg)
+
+async def hugs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        target = context.args[0]
+        await update.message.reply_text(f"🤗 {update.effective_user.mention_html()} обняла {target}!", parse_mode='HTML')
+    else:
+        text = random.choice([
+            "🤗 Обнимашки для всех!",
+            "🫂 Кто не обнимется — тот не играет в кастомке!",
+            "🫂 Токсиков тоже иногда обнимают… по голове… табуреткой 🙃",
+            "💖 Тепло и поддержка для всех девочек чата!",
+            "🌈 Пусть твой день будет мягким как пледик 🧸"
+        ])
+        await update.message.reply_text(text)
+
+async def predskaz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    today = datetime.now().date()
+    if last_predictions.get(uid) == today:
+        await update.message.reply_text("🔮 Уже получала предсказание сегодня!")
+    else:
+        last_predictions[uid] = today
+        await update.message.reply_text(f"🔮 {random.choice(predictions)}")
+
+async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    today = datetime.now().date()
+    if last_tarot.get(uid) == today:
+        await update.message.reply_text("🃏 Расклад доступен раз в день!")
+        return
+    card, normal, reverse = random.choice(tarot_cards)
+    meaning = random.choice([normal, reverse])
+    last_tarot[uid] = today
+    await update.message.reply_text(f"**{card}** — {meaning}", parse_mode='Markdown')
+
+async def lesbi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global last_lesbi, lesbi_pair
+    today = datetime.now().date()
+    if last_lesbi == today:
+        await update.message.reply_text("👭 Пара уже выбрана сегодня!")
+        return
+    members = list(users.values())
+    if len(members) < 2:
+        await update.message.reply_text("Недостаточно участниц для пары")
+        return
+    pair = random.sample(members, 2)
+    lesbi_pair = (pair[0]["name"], pair[1]["name"])
+    last_lesbi = today
+    text = f"💘 Сегодняшняя парочка: {lesbi_pair[0]} и {lesbi_pair[1]} — обнимайтесь крепко!"
+    await context.bot.send_message(chat_id=CHAT_ID, text=text)
+
+async def love(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Укажи, кого хочешь предложить: /love @username")
+        return
+    uid = update.effective_user.id
+    partner_username = context.args[0].replace("@", "")
+    for pid, pdata in users.items():
+        if pdata["nickname"] == partner_username:
+            users[uid]["married_to"] = pdata["name"]
+            pdata["married_to"] = users[uid]["name"]
+            await context.bot.send_message(chat_id=CHAT_ID, text=f"💍 Свадьба! {pdata['name']} теперь в браке с {users[uid]['name']} 💞")
+            return
+    await update.message.reply_text("Пользователь не найден!")
+
+async def divorce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    partner = users.get(uid, {}).get("married_to")
+    if not partner:
+        await update.message.reply_text("Ты не в браке!")
+        return
+    divorce_confirmations[uid] = partner
+    await update.message.reply_text("Подтверди развод: /confirmdivorce")
+
+async def confirmdivorce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    partner_name = divorce_confirmations.pop(uid, None)
+    if not partner_name:
+        await update.message.reply_text("Нет подтверждённого развода")
+        return
+    users[uid]["married_to"] = None
+    for pid, pdata in users.items():
+        if pdata["name"] == partner_name:
+            pdata["married_to"] = None
+            await context.bot.send_message(chat_id=CHAT_ID, text=f"💔 Развод! {users[uid]['name']} и {partner_name} расстались.")
+            return
+
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "✨ Возможности бота:\n"
+        "/profile — посмотреть профиль\n"
+        "/editprofile — изменить профиль\n"
+        "/grow — растить пипису\n"
+        "/top5 — топ пипис\n"
+        "/predskaz — предсказание\n"
+        "/tarot — карта Таро\n"
+        "/lesbi — случайная парочка\n"
+        "/hugs — обнимашки\n"
+        "/love @юзер — свадьба\n"
+        "/divorce — развод\n"
+        "/confirmdivorce — подтвердить развод\n"
+        "/about — это меню"
+    )
+
 app = ApplicationBuilder().token(TOKEN).build()
-
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("profile", profile))
 app.add_handler(CommandHandler("editprofile", editprofile))
 app.add_handler(CommandHandler("grow", grow))
-app.add_handler(CommandHandler("top5", top5))
-app.add_handler(CommandHandler("rating", fullrating))
 app.add_handler(CommandHandler("predskaz", predskaz))
 app.add_handler(CommandHandler("tarot", tarot))
-app.add_handler(CommandHandler("rules", rules))
-app.add_handler(CommandHandler("about", about))
 app.add_handler(CommandHandler("lesbi", lesbi))
 app.add_handler(CommandHandler("hugs", hugs))
 app.add_handler(CommandHandler("love", love))
 app.add_handler(CommandHandler("divorce", divorce))
 app.add_handler(CommandHandler("confirmdivorce", confirmdivorce))
-
+app.add_handler(CommandHandler("about", about))
 app.run_polling()
