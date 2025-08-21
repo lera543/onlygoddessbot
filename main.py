@@ -27,24 +27,19 @@ logger = logging.getLogger("OnlyGirlsBot")
 # state:
 # users: {
 #   user_id(str): {
-#     "name" (HTML-кликабельно на профиль, по введённому имени),
+#     "name" (HTML-кликабельно на профиль по введённому имени),
 #     "first_name", "username",
 #     "nickname", "uid", "bday", "city",
 #     "tiktok", "quote",
-#     "pipisa", "last_pipisa", "last_prediction",
-#     "married_to"
+#     "pipisa", "last_pipisa", "last_prediction"
 #   }
 # }
 # known_users: [int, ...]
-# proposals: { target_id(str): proposer_id(int) }
-# divorce_requests: { partner_id(str): requester_id(int) }
 # last_lesbi_date: "YYYY-MM-DD"
 # last_lesbi_pair: [user_id_a(int), user_id_b(int)]
 state = {
     "users": {},
     "known_users": [],
-    "proposals": {},
-    "divorce_requests": {},
     "last_lesbi_date": None,
     "last_lesbi_pair": None
 }
@@ -85,7 +80,6 @@ def ensure_user(user_id: int, first_name: Optional[str] = None, username: Option
             "pipisa": 0.0,
             "last_pipisa": None,
             "last_prediction": None,
-            "married_to": None,
         }
     else:
         if first_name:
@@ -166,11 +160,6 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/hugs [@юзер] — обнимашки (для всех или указанного)\n"
         "/compliment [@юзер] — комплимент (кому-то или рандом)\n"
         "/lesbi — лесби-пара дня (1 раз в день)\n"
-        "/love @юзер — сделать предложение\n"
-        "/acceptlove — принять предложение\n"
-        "/declinelove — отклонить предложение\n"
-        "/divorce — запрос на развод\n"
-        "/acceptdivorce — подтвердить развод\n"
         "/role @юзер — «кто сегодня самая…»\n"
         "/rules — правила клана (ссылка)"
     )
@@ -213,9 +202,6 @@ def render_profile(u: dict) -> str:
     else:
         tt_line = "📲 TikTok: не указан"
 
-    married_to = u.get("married_to")
-    married_line = f"💍 В браке с {married_to}\n" if married_to else ""
-
     text = (
         f"🙋‍♀️ Имя: {name}\n"
         f"🎮 Ник в игре: <code>{nickname}</code>\n"
@@ -224,7 +210,6 @@ def render_profile(u: dict) -> str:
         f"🏙 Город: {city}\n"
         f"{tt_line}\n"
         f"🍆 Пиписа: {pipisa:.1f} см\n"
-        f"{married_line}"
         f"📝 Девиз: {quote}"
     )
     return text
@@ -430,7 +415,7 @@ PREDICTIONS = [
     "Тебе можно просто быть 🌼",
     "Грусть — это тоже чувство, не враг 🌧️",
     "Забота о теле — это любовь, а не задача 🛁",
-    "С тебе начинается уют вокруг 🕯️",
+    "С тебя начинается уют вокруг 🕯️",
     "То, что твоё — тебя найдёт 📬",
     "Ошибка — не ты, а событие 🧯",
     "Важно: ты делаешь достаточно ✔️",
@@ -695,112 +680,6 @@ async def lesbi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = random.choice(lines).format(a=display_user(a), b=display_user(b))
     await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="HTML")
 
-# ===================== СВАДЬБЫ / РАЗВОДЫ =====================
-async def love(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Укажи, кому предложение: /love @username")
-        return
-    target_username = context.args[0].lstrip("@")
-    proposer = update.effective_user
-    ensure_user(proposer.id, proposer.first_name, proposer.username)
-
-    target_id = None
-    for suid, u in state["users"].items():
-        if u.get("username") == target_username or (u.get("name") and ("@" + target_username) in u["name"]):
-            target_id = int(suid)
-            break
-
-    if not target_id:
-        await update.message.reply_text("Не нашла участницу с таким username в базе. Попроси её сделать /editprofile.")
-        return
-
-    if state["users"][str(proposer.id)].get("married_to"):
-        await update.message.reply_text("Ты уже в браке 💍")
-        return
-    if state["users"][str(target_id)].get("married_to"):
-        await update.message.reply_text("Участница уже в браке 💍")
-        return
-
-    state["proposals"][str(target_id)] = proposer.id
-    save_state()
-    await context.bot.send_message(
-        chat_id=CHAT_ID,
-        text=f"💍 {proposer.mention_html()} сделала предложение @{target_username}! "
-             f"Ответ — /acceptlove или /declinelove",
-        parse_mode="HTML"
-    )
-
-async def acceptlove(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    me = update.effective_user
-    suid = str(me.id)
-    if suid not in state["proposals"]:
-        await update.message.reply_text("Нет активного предложения для тебя.")
-        return
-    proposer = state["proposals"].pop(suid)
-    ensure_user(proposer)
-    ensure_user(me.id)
-
-    state["users"][str(proposer)]["married_to"] = display_user(me.id)
-    state["users"][suid]["married_to"] = display_user(proposer)
-    save_state()
-
-    lines = [
-        "💍 {a} и {b} теперь официально жена и жена! Поздравляем! 🎉",
-        "👰‍♀️👰‍♀️ Сыграли свадьбу: {a} + {b} = 💒 Любовь!",
-        "🥂 Появилась новая семейная пара: {a} & {b}! Пусть будет счастье! 🫶",
-        "🎊 {a} и {b} теперь супруги в нашем клане! Нежности и обнимашек! 🥰",
-    ]
-    msg = random.choice(lines).format(a=display_user(proposer), b=display_user(me.id))
-    await context.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="HTML")
-
-async def declinelove(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    suid = str(update.effective_user.id)
-    if suid not in state["proposals"]:
-        await update.message.reply_text("Нет активного предложения для тебя.")
-        return
-    state["proposals"].pop(suid)
-    save_state()
-    await update.message.reply_text("Предложение отклонено.")
-
-async def divorce(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    me = update.effective_user
-    suid = str(me.id)
-    ensure_user(me.id)
-    my = state["users"][suid]
-    if not my.get("married_to"):
-        await update.message.reply_text("Ты не в браке.")
-        return
-
-    partner_id = None
-    for k, u in state["users"].items():
-        if u.get("name") and u["name"] == my["married_to"]:
-            partner_id = int(k)
-            break
-    if not partner_id:
-        await update.message.reply_text("Не нашла партнёрку в базе. Обратитесь к админам.")
-        return
-
-    state["divorce_requests"][str(partner_id)] = me.id
-    save_state()
-    await update.message.reply_text("Запрос на развод отправлен. Партнёрке нужно выполнить /acceptdivorce.")
-
-async def acceptdivorce(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    suid = str(update.effective_user.id)
-    if suid not in state["divorce_requests"]:
-        await update.message.reply_text("Нет активного запроса на развод.")
-        return
-    other = state["divorce_requests"].pop(suid)
-    if str(other) in state["users"]:
-        state["users"][str(other)]["married_to"] = None
-    if suid in state["users"]:
-        state["users"][suid]["married_to"] = None
-    save_state()
-    await context.bot.send_message(
-        chat_id=CHAT_ID,
-        text=f"💔 Развод! {display_user(other)} и {display_user(int(suid))} расстались.",
-        parse_mode="HTML"
-    )
-
 # ===================== /role @юзер =====================
 ROLES = [
     "самая красивая девочка💖",
@@ -947,10 +826,7 @@ def build_application():
     # Приветствия новых
     app.add_handler(ChatMemberHandler(greet_new_member, ChatMemberHandler.CHAT_MEMBER))
 
-    # Отслеживание говорящих
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, track_speaker))
-
-    # Профиль (пошагово)
+    # Профиль (пошагово) — добавляем раньше, чем трекер сообщений
     edit_conv = ConversationHandler(
         entry_points=[CommandHandler("editprofile", editprofile)],
         states={
@@ -976,17 +852,14 @@ def build_application():
     app.add_handler(CommandHandler("pipisa", pipisa))
     app.add_handler(CommandHandler("top5", top5))
     app.add_handler(CommandHandler("rating", rating))
+    app.add_handler(CommandHandler("predskaz", predskaz))
     app.add_handler(CommandHandler("hugs", hugs))
     app.add_handler(CommandHandler("compliment", compliment))
     app.add_handler(CommandHandler("lesbi", lesbi))
     app.add_handler(CommandHandler("role", role))
 
-    # Свадьбы/разводы
-    app.add_handler(CommandHandler("love", love))
-    app.add_handler(CommandHandler("acceptlove", acceptlove))
-    app.add_handler(CommandHandler("declinelove", declinelove))
-    app.add_handler(CommandHandler("divorce", divorce))
-    app.add_handler(CommandHandler("acceptdivorce", acceptdivorce))
+    # Трекер сообщений (последним — чтобы не сбивать ConversationHandler)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, track_speaker))
 
     # JobQueue — поздравления с ДР (каждое утро в 09:00 по времени сервера)
     app.job_queue.run_daily(birthday_job, time(hour=9, minute=0))
@@ -996,4 +869,4 @@ def build_application():
 if __name__ == "__main__":
     application = build_application()
     print("OnlyGirls bot запущен…")
-    application.run_polling(close_loop=False)
+    application.run_polling()
