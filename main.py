@@ -1,10 +1,9 @@
-# ✅ ПОЛНЫЙ РАБОЧИЙ КОД ДЛЯ ТВОЕГО БОТА OnlyGirls
-
 import logging
 import random
-from datetime import datetime, timedelta
-from telegram import Update, ReplyKeyboardRemove
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (ApplicationBuilder, CommandHandler, ContextTypes,
+                          MessageHandler, filters, CallbackQueryHandler, ConversationHandler)
 
 TOKEN = "8215387975:AAHS_mMHzXBGtDVevEBiSwsLcLPChs7Yq7k"
 CHAT_ID = -1001849339863
@@ -12,165 +11,201 @@ CHAT_ID = -1001849339863
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 👥 USERS
-users = {}
+users_data = {}
+married = set()
+lesbi_couples = {}
+last_prediction_date = {}
+last_lesbi_date = None
 
-# 🍆 Пиписа рост
-last_grow = {}
-
-# 🎴 Таро карты
-tarot_cards = [
-    ("Шут 🤡", "Новые начинания, наивность, свобода.", "Безрассудство, глупость, риски."),
-    ("Маг 🧙‍♂️", "Сила воли, мастерство, проявление желаемого.", "Манипуляции, обман, неиспользованный потенциал."),
-    # ... остальные карты
+PROFILE_QUESTIONS = [
+    "Как тебя зовут? (имя)",
+    "Какой у тебя ник в игре?",
+    "Какой у тебя UID?",
+    "Когда у тебя день рождения? (например, 01.01.2000)",
+    "Из какого ты города?",
+    "Оставь ссылку на свой TikTok или Instagram:",
+    "Когда ты вступила в чат? (например, 01.08.2025)",
+    "Поделись своим девизом или любимой цитатой:"
 ]
 
-# 🪄 Предсказания (сокращённо для примера)
-predictions = [
-    "Сегодня тебя ждёт приятный сюрприз 💌",
-    "Помни: ты достойна самого лучшего 🌟",
-    "Твоя энергия — магнит для успеха ✨",
-    # + ещё 197
+PREDICTIONS = [f"Предсказание {i}" for i in range(1, 201)]
+
+TAROT_CARDS = [
+    ("Шут 🤡", "новое начало, спонтанность, наивность", "безрассудство, неопределённость"),
+    ("Маг 🧙", "воля, мастерство, творческая энергия", "манипуляции, обман, неуверенность"),
+    ("Жрица 🔮", "интуиция, тайна, внутренняя мудрость", "скрытность, отстранённость")
+    # Добавь остальные при желании
 ]
 
-# 🫂 Обнимашки
-hug_phrases = [
-    "💞 Обнимашки всем девочкам чата!",
-    "🩷 Ты заслуживаешь тепла и любви!",
-    "🌸 Объятия лечат. Вот тебе немножко!",
-    "💖 Кто не обнимется — тот не играет в кастомке!",
-    "🫂 Токсиков тоже иногда обнимают… по голове… табуреткой 🙃",
+HUGS_MESSAGES = [
+    "Обнимаю тебя крепко-крепко 🫂 Всё будет хорошо!",
+    "Тебя кто-то обнимает прямо сейчас 🤗 Надеюсь, тебе стало теплее!",
+    "Мягкие обнимашки на твой день! 🧸 Ты супер!",
+    "Вот так нежно и заботливо — обнимаю 💞",
+    "Кто не обнимется — тот не играет в кастомке!",
+    "🫂 Токсиков тоже иногда обнимают… по голове… табуреткой 🙃"
 ]
 
-# 📜 Правила
-RULES_TEXT = """
-Добро пожаловать, девочка ❣️
-Ознакомься с правилами клана: https://telegra.ph/Pravila-klana-ঐOnlyGirlsঐ-05-29 🫶
-Важная информация — всегда в закрепе!
-Клановая приставка: ঔ
-"""
+PIPISA_UP_REACTIONS = [
+    "Пиписа выросла как на дрожжах! 🍆✨",
+    "Ого! Такая прибавка, аж в чате тепло стало 😳",
+    "Пиписа тянется к солнцу! ☀️",
+    "Сегодня удачный день для роста! 📈"
+]
 
-# ❤️‍🔥 Статусы отношений
-relationships = {}
+PIPISA_DOWN_REACTIONS = [
+    "Упс... что-то пошло не так 😬",
+    "Пиписа сжалась от холода 🥶",
+    "Грустный день, даже пиписа поникла 😢",
+    "Ничего, завтра вырастет снова! 💪"
+]
 
-# 🔁 Старт
+LOVE_MESSAGES = [
+    "💍 {a} и {b} теперь официально жена и жена! Поздравляем! 🎉",
+    "👰‍♀️👰‍♀️ Сыграли свадьбу: {a} + {b} = 💒 Любовь!",
+    "🥂 Появилась новая семейная пара: {a} & {b}! Пусть будет счастье! 🫶",
+    "🎊 {a} и {b} теперь супруги в нашем клане! Нежности и обнимашек! 🥰"
+]
+
+LESBI_MESSAGES = [
+    "🌈 Сегодняшняя лесби-пара: {a} и {b} 💋",
+    "🫶 Кто бы мог подумать! {a} и {b} — пара дня!",
+    "💘 Амур попал точно в цель! {a} и {b} теперь вместе 😍",
+    "💞 Любовь витает в воздухе: {a} + {b} = ❤️"
+]
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет, девочка 💖 Введи /about, чтобы узнать, что я умею!")
+    await update.message.reply_text("Привет! Я клановый бот для OnlyGirls. Напиши /about чтобы узнать, что я умею ✨")
 
-# 👤 Профиль
-async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    user = users.get(uid, {})
-    text = (
-        f"🙋‍♀️ Имя: {user.get('name', '')}\n"
-        f"🎮 Ник в игре: `{user.get('nickname', '')}`\n"
-        f"🔢 UID: `{user.get('uid', '')}`\n"
-        f"🎂 Дата рождения: {user.get('bday', '')}\n"
-        f"🏙 Город: {user.get('city', '')}\n"
-        f"📲 ТТ или inst: {user.get('social', '')}\n"
-        f"📅 Дата вступления: {user.get('joined_date', '')}\n"
-        f"🍆 Пиписа: {user.get('pipisa_height', 0.0)} см\n"
-        f"📝 Девиз: {user.get('quote', '')}"
-    )
-    await update.message.reply_text(text, parse_mode='Markdown')
-
-# ✏️ Редактирование
-async def editprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        parts = update.message.text.split(maxsplit=8)[1:]
-        if len(parts) != 8:
-            await update.message.reply_text("Формат: /editprofile имя ник uid др город соцсеть дата цитата")
-            return
-        name, nickname, uid, bday, city, social, joined_date, quote = parts
-        users[update.effective_user.id] = {
-            "name": name,
-            "nickname": nickname,
-            "uid": uid,
-            "bday": bday,
-            "city": city,
-            "social": social,
-            "joined_date": joined_date,
-            "quote": quote,
-            "pipisa_height": users.get(update.effective_user.id, {}).get("pipisa_height", 0.0)
-        }
-        await update.message.reply_text("Анкета обновлена 💖")
-    except Exception as e:
-        logger.error(e)
-        await update.message.reply_text("Ошибка при обновлении профиля")
-
-# 🍆 Рост пиписы
-async def grow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    now = datetime.now()
-    if uid in last_grow and now - last_grow[uid] < timedelta(hours=24):
-        await update.message.reply_text("Ты уже выращивала сегодня! Завтра ещё вырастет 🌱")
-        return
-    change = round(random.uniform(-10, 10), 1)
-    users.setdefault(uid, {}).setdefault("pipisa_height", 0.0)
-    users[uid]["pipisa_height"] = max(0.0, users[uid]["pipisa_height"] + change)
-    last_grow[uid] = now
-    phrase = "Пиписа выросла" if change > 0 else "Пиписа уменьшилась 😢"
-    await update.message.reply_text(f"{phrase} на {abs(change)} см. Сейчас: {users[uid]['pipisa_height']} см")
-
-# 🎴 Таро
-async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    card, upright, reversed = random.choice(tarot_cards)
-    position = random.choice(["прямое", "перевёрнутое"])
-    meaning = upright if position == "прямое" else reversed
-    await update.message.reply_text(f"🔮 **{card}** ({position})\n{meaning}", parse_mode='Markdown')
-
-# 🧠 Предсказание
-async def predskaz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(random.choice(predictions))
-
-# 🫂 Обнимашки
-async def hugs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(random.choice(hug_phrases))
-
-# 📜 Правила
-async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(RULES_TEXT)
-
-# 💌 About
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("""
-Я — бот клана OnlyGirls 💖 Вот что я умею:
+    text = (
+        "✨ <b>Функции бота:</b>\n"
+        "/editprofile — заполнить или обновить профиль\n"
+        "/profile — посмотреть профиль\n"
+        "/pipisa — вырастить пипису 🍆\n"
+        "/predskaz — получить предсказание\n"
+        "/tarot — расклад таро\n"
+        "/lesbi — случайная лесби-пара дня 🌈\n"
+        "/hugs — обнимашки 🤗\n"
+        "/love @user — сыграть свадьбу\n"
+        "/divorce @user — развод\n"
+        "/sovmestimost @user — совместимость по знакам\n"
+        "/rules — правила клана 📜"
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
 
-/profile — показать анкету
-/editprofile — редактировать анкету
-/grow — вырастить пипису
-/tarot — расклад таро
-/predskaz — предсказание
-/hugs — обнимашки
-/rules — правила клана
-/lesbi — рандомная пара из чата
-""")
+# Хендлер анкеты
+PROFILE, = range(1)
 
-# 💞 Лесби пара
-async def lesbi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(users) < 2:
-        await update.message.reply_text("Недостаточно участниц для пары")
+async def editprofile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["profile_step"] = 0
+    context.user_data["profile_answers"] = []
+    await update.message.reply_text(PROFILE_QUESTIONS[0])
+    return PROFILE
+
+async def profile_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    step = context.user_data["profile_step"]
+    context.user_data["profile_answers"].append(update.message.text)
+    step += 1
+    if step >= len(PROFILE_QUESTIONS):
+        users_data[update.effective_user.id] = {
+            "first_name": context.user_data["profile_answers"][0],
+            "nickname": context.user_data["profile_answers"][1],
+            "uid": context.user_data["profile_answers"][2],
+            "bday": context.user_data["profile_answers"][3],
+            "city": context.user_data["profile_answers"][4],
+            "social": context.user_data["profile_answers"][5],
+            "joined_date": context.user_data["profile_answers"][6],
+            "quote": context.user_data["profile_answers"][7],
+            "pipisa_height": 0.0
+        }
+        await update.message.reply_text("Профиль обновлён ✅")
+        return ConversationHandler.END
+    else:
+        context.user_data["profile_step"] = step
+        await update.message.reply_text(PROFILE_QUESTIONS[step])
+        return PROFILE
+
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = users_data.get(update.effective_user.id)
+    if not user:
+        await update.message.reply_text("Профиль не найден. Используй /editprofile")
         return
-    u1, u2 = random.sample(list(users.values()), 2)
-    phrases = [
-        "🌈 Новая пара недели!",
-        "💘 Что-то между ними точно есть...",
-        "👩‍❤️‍👩 Сердца бьются в унисон!",
-        "🫶 Кто-то нашёл свою девочку!",
-    ]
-    await context.bot.send_message(chat_id=CHAT_ID, text=f"{random.choice(phrases)}\n{u1['name']} + {u2['name']} 💞")
+    text = (
+        f"🙋‍♀️ Имя: {user['first_name']}\n"
+        f"🎮 Ник в игре: <code>{user['nickname']}</code>\n"
+        f"🔢 UID: <code>{user['uid']}</code>\n"
+        f"🎂 Дата рождения: {user['bday']}\n"
+        f"🏙 Город: {user['city']}\n"
+        f"📲 ТТ или inst: {user['social']}\n"
+        f"📅 Дата вступления: {user['joined_date']}\n"
+        f"🍆 Пиписа: {user['pipisa_height']} см\n"
+        f"📝 Девиз: {user['quote']}"
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
 
-# 🔧 Регистрируем хендлеры
+async def pipisa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    now = datetime.datetime.now().date()
+    user = users_data.get(user_id)
+    if not user:
+        await update.message.reply_text("Сначала заполни профиль через /editprofile")
+        return
+    if user.get("last_pipisa_date") == now:
+        await update.message.reply_text("Сегодня ты уже растила пипису! Попробуй завтра.")
+        return
+    delta = round(random.uniform(-10, 10), 1)
+    user["pipisa_height"] += delta
+    user["pipisa_height"] = round(max(user["pipisa_height"], 0.0), 1)
+    user["last_pipisa_date"] = now
+    reaction = random.choice(PIPISA_UP_REACTIONS if delta > 0 else PIPISA_DOWN_REACTIONS)
+    await update.message.reply_text(f"Изменение: {delta:+} см\n{reaction}")
+
+async def predskaz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    now = datetime.datetime.now().date()
+    if last_prediction_date.get(uid) == now:
+        await update.message.reply_text("Сегодня ты уже получала предсказание ✨")
+        return
+    last_prediction_date[uid] = now
+    await update.message.reply_text(random.choice(PREDICTIONS))
+
+async def tarot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    card, meaning, reversed_meaning = random.choice(TAROT_CARDS)
+    is_reversed = random.choice([True, False])
+    meaning_text = reversed_meaning if is_reversed else meaning
+    await update.message.reply_text(f"<b>{card}</b> ({'перевёрнутая' if is_reversed else 'прямая'}):\n{meaning_text}", parse_mode="HTML")
+
+async def hugs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(random.choice(HUGS_MESSAGES))
+
+async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "📜 <b>Правила клана:</b>\n"
+        "1. Уважай других участниц.\n"
+        "2. Не поддерживай войну.\n"
+        "3. Ставь клановую приставку ঔ в ник.\n"
+        "4. Соблюдай дисциплину.\n"
+        "5. Нарушения караются удалением из клана.\n\n"
+        "Полные правила тут: https://telegra.ph/Pravila-klana-৐OnlyGirls৐-05-29"
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
+
 app = ApplicationBuilder().token(TOKEN).build()
+
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("about", about))
 app.add_handler(CommandHandler("profile", profile))
-app.add_handler(CommandHandler("editprofile", editprofile))
-app.add_handler(CommandHandler("grow", grow))
-app.add_handler(CommandHandler("tarot", tarot))
+app.add_handler(CommandHandler("pipisa", pipisa))
 app.add_handler(CommandHandler("predskaz", predskaz))
+app.add_handler(CommandHandler("tarot", tarot))
 app.add_handler(CommandHandler("hugs", hugs))
 app.add_handler(CommandHandler("rules", rules))
-app.add_handler(CommandHandler("about", about))
-app.add_handler(CommandHandler("lesbi", lesbi))
+
+app.add_handler(ConversationHandler(
+    entry_points=[CommandHandler("editprofile", editprofile)],
+    states={PROFILE: [MessageHandler(filters.TEXT & ~filters.COMMAND, profile_input)]},
+    fallbacks=[]
+))
 
 app.run_polling()
